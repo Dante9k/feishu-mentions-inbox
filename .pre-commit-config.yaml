@@ -1,0 +1,27 @@
+default_stages: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Ruff formatter
+        entry: ruff format app tests
+        language: system
+        pass_filenames: false
+
+      - id: ruff-lint
+        name: Ruff linter
+        entry: ruff check --fix app tests
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy
+        entry: mypy app
+        language: system
+        pass_filenames: false
+
+      - id: pytest
+        name: pytest (SQLite-focused)
+        entry: pytest --ignore=tests/test_postgres_integration.py
+        language: system
+        pass_filenames: false

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mentions
+          POSTGRES_USER: mentions
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        options: >-
+          --health-cmd "pg_isready -U mentions -d mentions"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TEST_DATABASE_URL: postgresql://mentions:ci-only-postgres-password@localhost:5432/mentions
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install package and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Check formatting
+        run: ruff format --check app tests
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Type-check application code
+        run: mypy app
+
+      - name: Run test suite
+        run: pytest --cov=app --cov-report=term-missing
+
+      - name: Audit installed dependencies
+        if: matrix.python == '3.12'
+        run: pip-audit --strict
+
+  container:
+    name: Production container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Build production image
+        run: docker build --pull --tag feishu-mentions-inbox:ci .

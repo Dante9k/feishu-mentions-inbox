@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mentions
+      POSTGRES_USER: mentions
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mentions -d mentions"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mentions_postgres:/var/lib/postgresql/data
+
+  app:
+    environment:
+      DATABASE_URL: postgresql://mentions:${POSTGRES_PASSWORD}@postgres:5432/mentions
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  mentions_postgres:

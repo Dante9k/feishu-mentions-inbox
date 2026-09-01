@@ -1,0 +1,48 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.egg-info
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Runtime data and logs
+*.log
+*.pid
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+data/
+backups/
+*.bak

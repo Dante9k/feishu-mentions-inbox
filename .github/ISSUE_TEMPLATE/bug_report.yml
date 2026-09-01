@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible defect without exposing enterprise data.
+title: "fix: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real messages, employee names, chat IDs, tenant IDs, Base IDs,
+        OAuth codes, tokens, secrets, production URLs, or raw event payloads.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior using synthetic data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List the smallest safe steps needed to reproduce the issue.
+      placeholder: |
+        1. Start the service with SQLite and synthetic settings.
+        2. Submit a sanitized event.
+        3. Observe the result.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Project version or commit
+      placeholder: 0.1.0 or a short commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Database backend
+      options: [SQLite, PostgreSQL, Not applicable]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or stack trace
+      description: Remove all identifiers and secrets before pasting.
+      render: text

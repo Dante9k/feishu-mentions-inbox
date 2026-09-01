@@ -1,0 +1,22 @@
+# Never send local configuration or secrets to the Docker build context.
+.env*
+.venv
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+.coverage
+htmlcov
+data
+*.db
+*.db-shm
+*.db-wal
+dist
+build
+*.egg-info
+tests
+docs

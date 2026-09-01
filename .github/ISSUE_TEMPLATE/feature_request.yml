@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a privacy-preserving improvement.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real employee, chat, tenant, message, token, or Base data.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain the user problem and who benefits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired behavior, including edge cases and privacy impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any workarounds or alternatives.

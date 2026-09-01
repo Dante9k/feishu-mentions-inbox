@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feishu-mentions-inbox"
+version = "0.1.0"
+description = "Enterprise multi-user Feishu mention inbox"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+requires-python = ">=3.11"
+keywords = ["feishu", "lark", "mentions", "inbox", "bitable", "fastapi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Framework :: FastAPI",
+  "Intended Audience :: System Administrators",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Chat",
+]
+dependencies = [
+  "aiosqlite>=0.22.1,<1",
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "httpx>=0.27,<1",
+  "pydantic>=2.9,<3",
+  "psycopg[binary,pool]>=3.2,<4",
+  "cryptography>=50,<51",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.18,<2",
+  "pip-audit>=2.9,<3",
+  "pre-commit>=4.6,<5",
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=1,<2",
+  "pytest-cov>=7,<8",
+  "ruff>=0.16,<0.17",
+]
+
+[project.scripts]
+feishu-mentions-inbox = "app.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["py.typed"]
+"app.migrations" = ["*.sql"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers"]
+markers = [
+  "integration: requires an isolated PostgreSQL database",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "C4", "E", "F", "I", "RUF", "SIM", "UP"]
+ignore = ["E501", "RUF001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+pretty = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  '\.\.\.',
+]
+show_missing = true
+skip_covered = true
+fail_under = 45
