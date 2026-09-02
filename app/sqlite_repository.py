@@ -49,7 +49,10 @@ def _db_time(value: datetime | None = None) -> str:
     timestamp = value or datetime.now(UTC)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
-    return timestamp.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    # SQLite's schema defaults use millisecond ISO-8601 timestamps.  Keep
+    # application-provided values at the same precision so TEXT comparisons
+    # correctly consider a job created within the current millisecond ready.
+    return timestamp.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _datetime(value: Any) -> datetime | None:
