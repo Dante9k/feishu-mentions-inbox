@@ -10,7 +10,7 @@
 | 配置飞书应用、事件和 OAuth | [飞书应用配置](feishu-setup.md) |
 | 创建多维表格、权限与自动化 | [多维表格配置](bitable-setup.md) |
 | 选择 SQLite 或 PostgreSQL | [数据库模式](database-backends.md) |
-| 部署、反向代理、备份和监控 | [部署与运维](deployment.md) |
+| 从服务器准备到验收、备份、升级和故障排查 | [部署操作手册](deployment.md) |
 | 调用或集成服务接口 | [API 参考](api.md) |
 | 了解数据边界、脱敏和密钥策略 | [隐私与安全设计](privacy-and-security.md) |
 | 进行三账号验收和分批上线 | [验收与分批上线清单](acceptance-checklist.md) |
