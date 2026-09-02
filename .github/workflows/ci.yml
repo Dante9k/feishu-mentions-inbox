@@ -69,7 +69,8 @@ jobs:
         if: matrix.python == '3.12'
         # The project is installed editable for CI and is intentionally not a
         # PyPI distribution. Audit its resolved third-party dependencies.
-        run: pip-audit --strict --skip-editable
+        # --strict conflicts with skipping that local, non-PyPI package.
+        run: pip-audit --skip-editable
 
   container:
     name: Production container build
