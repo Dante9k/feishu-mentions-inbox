@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -36,6 +37,8 @@ from .service import MentionProcessor, StatusService, event_key
 from .workers import BackgroundSupervisor
 
 logger = logging.getLogger(__name__)
+
+OAUTH_STATE_MAX_AGE_SECONDS = 600
 
 
 class EnableUserRequest(BaseModel):
@@ -115,10 +118,30 @@ class AppContainer:
         if not state_secret and settings.app_env != "production":
             state_secret = "development-only-oauth-state-secret"
         self.state_signer = OAuthStateSigner(state_secret)
+        self.oauth_state_lock = asyncio.Lock()
+        self.local_oauth_states: dict[bytes, float] = {}
         self.bootstrap_lock = asyncio.Lock()
         self.single_user_lock = asyncio.Lock()
         self.supervisor: BackgroundSupervisor | None = None
         self.receiver: LongConnectionReceiver | None = None
+
+    async def remember_local_oauth_state(self, state_value: str) -> None:
+        now = time.monotonic()
+        digest = hashlib.sha256(state_value.encode("utf-8")).digest()
+        async with self.oauth_state_lock:
+            self.local_oauth_states = {
+                key: expires_at
+                for key, expires_at in self.local_oauth_states.items()
+                if expires_at > now
+            }
+            self.local_oauth_states[digest] = now + OAUTH_STATE_MAX_AGE_SECONDS
+
+    async def consume_local_oauth_state(self, state_value: str) -> bool:
+        now = time.monotonic()
+        digest = hashlib.sha256(state_value.encode("utf-8")).digest()
+        async with self.oauth_state_lock:
+            expires_at = self.local_oauth_states.pop(digest, 0)
+            return expires_at > now
 
     async def startup(self) -> None:
         if self.settings.app_env == "production":
@@ -396,12 +419,15 @@ def create_app(
             ) from exc
         response = RedirectResponse(authorization_url, status_code=302)
         if app_settings.local_only:
+            await container.remember_local_oauth_state(state_value)
+        else:
             response.set_cookie(
                 "oauth_state",
                 state_value,
                 httponly=True,
+                secure=True,
                 samesite="lax",
-                max_age=600,
+                max_age=OAUTH_STATE_MAX_AGE_SECONDS,
                 path="/auth/feishu",
             )
         return response
@@ -410,16 +436,19 @@ def create_app(
     async def oauth_callback(
         request: Request, code: str = Query(min_length=1), state: str = Query(min_length=1)
     ) -> HTMLResponse:
-        if app_settings.local_only and not secrets.compare_digest(
-            request.cookies.get("oauth_state", ""), state
-        ):
-            raise HTTPException(
-                status_code=400, detail="OAuth must complete in the initiating browser"
-            )
         try:
             container.state_signer.verify(state)
         except SecurityError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if app_settings.local_only:
+            if not await container.consume_local_oauth_state(state):
+                raise HTTPException(
+                    status_code=400, detail="OAuth state is unknown or already used"
+                )
+        elif not secrets.compare_digest(request.cookies.get("oauth_state", ""), state):
+            raise HTTPException(
+                status_code=400, detail="OAuth must complete in the initiating browser"
+            )
         try:
             tokens = await container.feishu.exchange_oauth_code(code)
             info = await container.feishu.get_oauth_user(tokens.access_token)
@@ -508,7 +537,14 @@ def create_app(
                 f"<h1>本机身份初始化成功</h1><p>租户和首位用户已安全保存。{next_step}</p>",
                 status_code=200,
             )
-            response.delete_cookie("oauth_state", path="/auth/feishu")
+            if not app_settings.local_only:
+                response.delete_cookie(
+                    "oauth_state",
+                    path="/auth/feishu",
+                    secure=True,
+                    httponly=True,
+                    samesite="lax",
+                )
             return response
         if not app_settings.bitable_user_role_id and not app_settings.local_single_user_pilot:
             raise HTTPException(status_code=503, detail="Bitable employee role is not configured")
@@ -538,7 +574,14 @@ def create_app(
             "<h1>授权成功</h1><p>个人 @收件箱已启用，可以关闭此页面。</p>",
             status_code=200,
         )
-        response.delete_cookie("oauth_state", path="/auth/feishu")
+        if not app_settings.local_only:
+            response.delete_cookie(
+                "oauth_state",
+                path="/auth/feishu",
+                secure=True,
+                httponly=True,
+                samesite="lax",
+            )
         return response
 
     @app.post("/integrations/bitable/status", dependencies=[Depends(bitable_auth)])

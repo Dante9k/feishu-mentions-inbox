@@ -291,13 +291,13 @@ def test_local_activation_does_not_send_unusable_loopback_url() -> None:
         assert not feishu.activation_messages
         start = client.get("/auth/feishu/start", follow_redirects=False)
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        assert "httponly" in start.headers["set-cookie"].lower()
-        assert (
-            client.get(
-                "/auth/feishu/callback", params={"code": "valid-code", "state": state}
-            ).status_code
-            == 200
+        assert "set-cookie" not in start.headers
+        callback = client.get(
+            "/auth/feishu/callback", params={"code": "valid-code", "state": state}
         )
+        replay = client.get("/auth/feishu/callback", params={"code": "valid-code", "state": state})
+        assert callback.status_code == 200
+        assert replay.status_code == 400
         assert "oauth_state" not in client.cookies
 
 

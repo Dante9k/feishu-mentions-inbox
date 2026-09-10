@@ -103,7 +103,7 @@ def test_admin_enable_and_oauth_activation() -> None:
     bitable = FakeBitable()
     app = create_app(settings(), repository=repo, feishu=feishu, bitable=bitable)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://mentions.example.com") as client:
         enabled = client.post(
             "/admin/users",
             headers={"Authorization": "Bearer admin-token"},
@@ -111,6 +111,10 @@ def test_admin_enable_and_oauth_activation() -> None:
         )
         start = client.get("/auth/feishu/start", follow_redirects=False)
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        cookie = start.headers["set-cookie"].lower()
+        assert "httponly" in cookie
+        assert "secure" in cookie
+        assert "samesite=lax" in cookie
         callback = client.get(
             "/auth/feishu/callback",
             params={"code": "valid-code", "state": state},
