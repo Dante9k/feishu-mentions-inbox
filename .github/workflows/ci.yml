@@ -40,7 +40,7 @@ jobs:
       TEST_DATABASE_URL: postgresql://mentions:ci-only-postgres-password@localhost:5432/mentions
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build production image
         run: docker build --pull --tag feishu-mentions-inbox:ci .
