@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import secrets
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
@@ -19,6 +21,7 @@ from .bitable import BitableClient, BitableError
 from .config import Settings
 from .database import PersistentRepository, create_repository
 from .feishu import FeishuAPIError, FeishuClient
+from .long_connection import LongConnectionReceiver
 from .models import InboxStatus, User
 from .repository import Repository
 from .security import (
@@ -34,6 +37,8 @@ from .service import MentionProcessor, StatusService, event_key
 from .workers import BackgroundSupervisor
 
 logger = logging.getLogger(__name__)
+
+OAUTH_STATE_MAX_AGE_SECONDS = 600
 
 
 class EnableUserRequest(BaseModel):
@@ -92,6 +97,9 @@ class AppContainer:
         bitable: BitableClient | None = None,
     ):
         self.settings = settings
+        issues = settings.validate_runtime()
+        if issues:
+            raise RuntimeError("invalid settings: " + ", ".join(issues))
         cipher_secret = settings.token_encryption_secret
         if not cipher_secret and settings.app_env != "production":
             cipher_secret = "development-only-token-encryption-secret"
@@ -110,18 +118,50 @@ class AppContainer:
         if not state_secret and settings.app_env != "production":
             state_secret = "development-only-oauth-state-secret"
         self.state_signer = OAuthStateSigner(state_secret)
+        self.oauth_state_lock = asyncio.Lock()
+        self.local_oauth_states: dict[bytes, float] = {}
+        self.bootstrap_lock = asyncio.Lock()
+        self.single_user_lock = asyncio.Lock()
         self.supervisor: BackgroundSupervisor | None = None
+        self.receiver: LongConnectionReceiver | None = None
+
+    async def remember_local_oauth_state(self, state_value: str) -> None:
+        now = time.monotonic()
+        digest = hashlib.sha256(state_value.encode("utf-8")).digest()
+        async with self.oauth_state_lock:
+            self.local_oauth_states = {
+                key: expires_at
+                for key, expires_at in self.local_oauth_states.items()
+                if expires_at > now
+            }
+            self.local_oauth_states[digest] = now + OAUTH_STATE_MAX_AGE_SECONDS
+
+    async def consume_local_oauth_state(self, state_value: str) -> bool:
+        now = time.monotonic()
+        digest = hashlib.sha256(state_value.encode("utf-8")).digest()
+        async with self.oauth_state_lock:
+            expires_at = self.local_oauth_states.pop(digest, 0)
+            return expires_at > now
 
     async def startup(self) -> None:
         if self.settings.app_env == "production":
             missing = self.settings.validate_production()
             if missing:
                 raise RuntimeError("missing production settings: " + ", ".join(missing))
-            if not self.settings.public_base_url.startswith("https://"):
+            if not self.settings.local_only and not self.settings.public_base_url.startswith(
+                "https://"
+            ):
                 raise RuntimeError("PUBLIC_BASE_URL must use HTTPS in production")
         open_method = getattr(self.repository, "open", None)
         if open_method:
             await open_method()
+        if self.settings.local_single_user_pilot and self.settings.run_background_workers:
+            users = await self.repository.list_users()
+            if len(users) != 1 or not users[0].active:
+                await self.shutdown()
+                raise RuntimeError(
+                    "LOCAL_SINGLE_USER_PILOT requires exactly one enabled, authorized user"
+                )
         if self.settings.run_background_workers and isinstance(
             self.repository, PersistentRepository
         ):
@@ -133,8 +173,17 @@ class AppContainer:
                 self.bitable,
             )
             await self.supervisor.start()
+            if self.settings.feishu_event_transport == "long_connection":
+                self.receiver = LongConnectionReceiver(self.settings, self.repository)
+                try:
+                    await self.receiver.start()
+                except Exception:
+                    await self.shutdown()
+                    raise
 
     async def shutdown(self) -> None:
+        if self.receiver:
+            await self.receiver.stop()
         if self.supervisor:
             await self.supervisor.stop()
         await self.bitable.close()
@@ -174,6 +223,31 @@ def create_app(
     )
     app.state.container = container
 
+    if app_settings.local_only:
+
+        @app.middleware("http")
+        async def local_boundary(
+            request: Request, call_next: Callable[[Request], Awaitable[Response]]
+        ) -> Response:
+            # Reject DNS rebinding and accidental reverse-proxy exposure as well
+            # as cross-origin browser requests. Do not trust forwarded headers.
+            expected_host = f"127.0.0.1:{app_settings.port}"
+            if (
+                request.client is None
+                or request.client.host not in {"127.0.0.1", "::1"}
+                or request.headers.get("host") != expected_host
+                or request.headers.get("origin", app_settings.public_base_url)
+                != app_settings.public_base_url
+            ):
+                return JSONResponse({"detail": "local access only"}, status_code=403)
+            if request.url.path.startswith("/integrations/"):
+                return JSONResponse({"detail": "callbacks disabled in local mode"}, status_code=404)
+            response = await call_next(request)
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+
     def admin_auth(authorization: str | None = Header(default=None)) -> None:
         try:
             require_bearer(authorization, app_settings.admin_api_token)
@@ -186,7 +260,7 @@ def create_app(
         except SecurityError as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
-    async def _enable_allowlist_user(
+    async def _enable_allowlist_user_unlocked(
         body: EnableUserRequest,
         bitable_record_id: str = "",
         resend_existing: bool = False,
@@ -194,6 +268,13 @@ def create_app(
         tenant_key = body.tenant_key or app_settings.feishu_tenant_key
         if not tenant_key:
             raise HTTPException(status_code=400, detail="tenant_key is required")
+        if app_settings.local_single_user_pilot:
+            users = await container.repository.list_users()
+            if any(user.tenant_key != tenant_key or user.user_id != body.user_id for user in users):
+                raise HTTPException(
+                    status_code=409,
+                    detail="local single-user pilot refuses additional users",
+                )
         open_id, name = body.open_id, body.name
         if not open_id or not name:
             try:
@@ -220,9 +301,25 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         activation_url = f"{app_settings.public_base_url}/auth/feishu/start"
-        if body.send_activation_message and (existing is None or resend_existing):
+        if (
+            not app_settings.local_only
+            and body.send_activation_message
+            and (existing is None or resend_existing)
+        ):
             await container.feishu.send_activation_message(body.user_id, activation_url)
         return user, activation_url
+
+    async def _enable_allowlist_user(
+        body: EnableUserRequest,
+        bitable_record_id: str = "",
+        resend_existing: bool = False,
+    ) -> tuple[User, str]:
+        if not app_settings.local_single_user_pilot:
+            return await _enable_allowlist_user_unlocked(body, bitable_record_id, resend_existing)
+        # Keep the read/validate/write sequence atomic inside this process so
+        # two concurrent administrator requests cannot enroll two identities.
+        async with container.single_user_lock:
+            return await _enable_allowlist_user_unlocked(body, bitable_record_id, resend_existing)
 
     async def _disable_allowlist_user(user_id: str, bitable_record_id: str = "") -> User:
         try:
@@ -233,14 +330,15 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
-        try:
-            await container.bitable.revoke_user_access(user.open_id)
-        except BitableError as exc:
-            logger.exception("user disabled but Bitable access removal failed")
-            raise HTTPException(
-                status_code=502,
-                detail="collection stopped, but Bitable access removal must be retried",
-            ) from exc
+        if app_settings.bitable_user_role_id and not app_settings.local_single_user_pilot:
+            try:
+                await container.bitable.revoke_user_access(user.open_id)
+            except BitableError as exc:
+                logger.exception("user disabled but Bitable access removal failed")
+                raise HTTPException(
+                    status_code=502,
+                    detail="collection stopped, but Bitable access removal must be retried",
+                ) from exc
         return user
 
     @app.get("/healthz")
@@ -248,10 +346,24 @@ def create_app(
         health_method = getattr(container.repository, "health", None)
         database_ok = await health_method() if health_method else True
         payload = {"status": "ok" if database_ok else "degraded", "database": database_ok}
+        if app_settings.local_only:
+            payload.update(
+                {
+                    "local_only": True,
+                    "event_transport": app_settings.feishu_event_transport,
+                    "background_workers": container.supervisor is not None,
+                    # A running SDK process is NOT proof of an authenticated connection.
+                    "receiver_process_running": bool(
+                        container.receiver and container.receiver.running
+                    ),
+                }
+            )
         return JSONResponse(payload, status_code=200 if database_ok else 503)
 
     @app.post("/integrations/feishu/events")
     async def feishu_events(request: Request) -> dict[str, Any]:
+        if app_settings.feishu_event_transport != "webhook":
+            raise HTTPException(status_code=404, detail="webhook transport is disabled")
         raw_body = await request.body()
         if len(raw_body) > 2 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="event body is too large")
@@ -299,44 +411,178 @@ def create_app(
     @app.get("/auth/feishu/start")
     async def oauth_start() -> RedirectResponse:
         state_value = container.state_signer.sign(secrets.token_urlsafe(24))
-        return RedirectResponse(container.feishu.authorize_url(state_value), status_code=302)
+        try:
+            authorization_url = container.feishu.authorize_url(state_value)
+        except FeishuAPIError as exc:
+            raise HTTPException(
+                status_code=503, detail="Feishu application is not configured"
+            ) from exc
+        response = RedirectResponse(authorization_url, status_code=302)
+        if app_settings.local_only:
+            await container.remember_local_oauth_state(state_value)
+        else:
+            response.set_cookie(
+                "oauth_state",
+                state_value,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                max_age=OAUTH_STATE_MAX_AGE_SECONDS,
+                path="/auth/feishu",
+            )
+        return response
 
     @app.get("/auth/feishu/callback")
     async def oauth_callback(
-        code: str = Query(min_length=1), state: str = Query(min_length=1)
+        request: Request, code: str = Query(min_length=1), state: str = Query(min_length=1)
     ) -> HTMLResponse:
         try:
             container.state_signer.verify(state)
         except SecurityError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        tokens = await container.feishu.exchange_oauth_code(code)
-        info = await container.feishu.get_oauth_user(tokens.access_token)
+        if app_settings.local_only:
+            if not await container.consume_local_oauth_state(state):
+                raise HTTPException(
+                    status_code=400, detail="OAuth state is unknown or already used"
+                )
+        elif not secrets.compare_digest(request.cookies.get("oauth_state", ""), state):
+            raise HTTPException(
+                status_code=400, detail="OAuth must complete in the initiating browser"
+            )
+        try:
+            tokens = await container.feishu.exchange_oauth_code(code)
+            info = await container.feishu.get_oauth_user(tokens.access_token)
+        except FeishuAPIError as exc:
+            raise HTTPException(status_code=502, detail="Feishu OAuth exchange failed") from exc
         if not info.user_id or not info.tenant_key:
             raise HTTPException(status_code=400, detail="Feishu user identity is incomplete")
         allowlisted = await container.repository.get_enabled_user(info.tenant_key, info.user_id)
+        bootstrapped = False
+        if app_settings.local_bootstrap_first_user:
+            async with container.bootstrap_lock:
+                allowlisted = await container.repository.get_enabled_user(
+                    info.tenant_key, info.user_id
+                )
+                existing_users = await container.repository.list_users()
+                if allowlisted is None:
+                    if existing_users:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="local first-user bootstrap has already been consumed",
+                        )
+                    allowlisted = await container.repository.enable_user(
+                        User(
+                            tenant_key=info.tenant_key,
+                            user_id=info.user_id,
+                            open_id=info.open_id,
+                            name=info.name,
+                        )
+                    )
+                    bootstrapped = True
+                elif (
+                    len(existing_users) == 1
+                    and existing_users[0].tenant_key == info.tenant_key
+                    and existing_users[0].user_id == info.user_id
+                    and not existing_users[0].authorized
+                ):
+                    # Resume safely when OAuth reached identity lookup but a later
+                    # setup prerequisite failed during the first attempt.
+                    bootstrapped = True
         if allowlisted is None:
             raise HTTPException(
                 status_code=403, detail="user is not on the administrator allowlist"
             )
-        memberships = await container.feishu.list_user_chats(tokens.access_token)
+        if app_settings.local_single_user_pilot:
+            users = await container.repository.list_users()
+            if (
+                len(users) != 1
+                or users[0].tenant_key != info.tenant_key
+                or users[0].user_id != info.user_id
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="local single-user pilot identity mismatch",
+                )
+        if bootstrapped:
+            user = await container.repository.activate_user(info, tokens)
+            if user is None:
+                raise HTTPException(status_code=403, detail="local identity initialization failed")
+            try:
+                from pathlib import Path
+
+                from .setup import update_config
+
+                update_config(
+                    Path(app_settings.local_config_path),
+                    {"FEISHU_TENANT_KEY": info.tenant_key},
+                )
+            except OSError as exc:
+                logger.exception("unable to persist bootstrapped tenant identity")
+                raise HTTPException(
+                    status_code=500,
+                    detail="identity initialized but local configuration update failed",
+                ) from exc
+            try:
+                memberships = await container.feishu.list_user_chats(tokens.access_token)
+            except FeishuAPIError:
+                memberships = []
+            if memberships:
+                await container.repository.replace_user_chats(user, memberships)
+            next_step = (
+                "请先发布并启用应用，然后重新授权以启用收件箱。"
+                if app_settings.local_single_user_pilot
+                else "请先发布并启用应用、配置普通员工权限角色，然后重新授权以启用收件箱。"
+            )
+            response = HTMLResponse(
+                f"<h1>本机身份初始化成功</h1><p>租户和首位用户已安全保存。{next_step}</p>",
+                status_code=200,
+            )
+            if not app_settings.local_only:
+                response.delete_cookie(
+                    "oauth_state",
+                    path="/auth/feishu",
+                    secure=True,
+                    httponly=True,
+                    samesite="lax",
+                )
+            return response
+        if not app_settings.bitable_user_role_id and not app_settings.local_single_user_pilot:
+            raise HTTPException(status_code=503, detail="Bitable employee role is not configured")
         try:
-            await container.bitable.grant_user_access(info.open_id)
-        except BitableError as exc:
-            logger.exception("unable to grant Bitable access during activation")
+            memberships = await container.feishu.list_user_chats(tokens.access_token)
+        except FeishuAPIError as exc:
             raise HTTPException(
-                status_code=502, detail="unable to grant personal inbox access"
+                status_code=502, detail="Feishu application is not active for this user"
             ) from exc
+        if app_settings.bitable_user_role_id and not app_settings.local_single_user_pilot:
+            try:
+                await container.bitable.grant_user_access(info.open_id)
+            except BitableError as exc:
+                logger.exception("unable to grant Bitable access during activation")
+                raise HTTPException(
+                    status_code=502, detail="unable to grant personal inbox access"
+                ) from exc
         user = await container.repository.activate_user(info, tokens)
         if user is None:
-            await container.bitable.revoke_user_access(info.open_id)
+            if app_settings.bitable_user_role_id and not app_settings.local_single_user_pilot:
+                await container.bitable.revoke_user_access(info.open_id)
             raise HTTPException(
                 status_code=403, detail="user is not on the administrator allowlist"
             )
         await container.repository.replace_user_chats(user, memberships)
-        return HTMLResponse(
+        response = HTMLResponse(
             "<h1>授权成功</h1><p>个人 @收件箱已启用，可以关闭此页面。</p>",
             status_code=200,
         )
+        if not app_settings.local_only:
+            response.delete_cookie(
+                "oauth_state",
+                path="/auth/feishu",
+                secure=True,
+                httponly=True,
+                samesite="lax",
+            )
+        return response
 
     @app.post("/integrations/bitable/status", dependencies=[Depends(bitable_auth)])
     async def bitable_status(body: StatusCallbackRequest) -> dict[str, Any]:

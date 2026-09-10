@@ -885,16 +885,24 @@ class PostgresRepository:
             )
 
     async def set_bot_membership(
-        self, tenant_key: str, chat_id: str, present: bool, name: str = ""
+        self,
+        tenant_key: str,
+        chat_id: str,
+        present: bool,
+        name: str = "",
+        external: bool | None = None,
     ) -> Chat:
+        external_value = True if external is None else external
         async with self.pool.connection() as conn, conn.transaction():
             cursor = await conn.execute(
                 """
-                INSERT INTO chats(id, tenant_key, chat_id, name, bot_present)
-                VALUES (%s,%s,%s,%s,%s)
+                INSERT INTO chats(id, tenant_key, chat_id, name, external, bot_present)
+                VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (tenant_key, chat_id) DO UPDATE SET
                     name=CASE WHEN EXCLUDED.name='' THEN chats.name ELSE EXCLUDED.name END,
-                    bot_present=EXCLUDED.bot_present, disbanded=FALSE,
+                    external=CASE WHEN %s THEN EXCLUDED.external ELSE chats.external END,
+                    bot_present=EXCLUDED.bot_present,
+                    disbanded=CASE WHEN EXCLUDED.bot_present THEN FALSE ELSE chats.disbanded END,
                     unsupported=CASE WHEN EXCLUDED.bot_present THEN FALSE
                                      ELSE chats.unsupported END,
                     unsupported_reason=CASE WHEN EXCLUDED.bot_present THEN ''
@@ -902,7 +910,15 @@ class PostgresRepository:
                     updated_at=NOW()
                 RETURNING *
                 """,
-                (uuid4(), tenant_key, chat_id, name or chat_id, present),
+                (
+                    uuid4(),
+                    tenant_key,
+                    chat_id,
+                    name or chat_id,
+                    external_value,
+                    present,
+                    external is not None,
+                ),
             )
             row = await cursor.fetchone()
             if not row:
@@ -926,10 +942,14 @@ class PostgresRepository:
         async with self.pool.connection() as conn, conn.transaction():
             cursor = await conn.execute(
                 """
-                UPDATE chats SET disbanded=TRUE, bot_present=FALSE, updated_at=NOW()
-                WHERE tenant_key=%s AND chat_id=%s RETURNING id
+                INSERT INTO chats(
+                    id, tenant_key, chat_id, name, external, bot_present, disbanded
+                ) VALUES (%s,%s,%s,%s,TRUE,FALSE,TRUE)
+                ON CONFLICT (tenant_key, chat_id) DO UPDATE SET
+                    disbanded=TRUE, bot_present=FALSE, updated_at=NOW()
+                RETURNING id
                 """,
-                (tenant_key, chat_id),
+                (uuid4(), tenant_key, chat_id, chat_id),
             )
             row = await cursor.fetchone()
             if row:

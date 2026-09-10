@@ -18,9 +18,11 @@ from .repository import Repository
 
 
 class ChatResolver(Protocol):
-    async def resolve_chat(self, tenant_key: str, chat_id: str) -> Chat: ...
+    async def resolve_chat(self, tenant_key: str, chat_id: str) -> Chat:
+        raise NotImplementedError
 
-    async def list_chat_member_user_ids(self, chat_id: str) -> set[str]: ...
+    async def list_chat_member_user_ids(self, chat_id: str) -> set[str]:
+        raise NotImplementedError
 
 
 class MentionProcessor:
@@ -44,18 +46,16 @@ class MentionProcessor:
             return []
 
         chat = await self._repository.get_chat(incoming.tenant_key, incoming.chat_id)
-        if chat is None and self._chat_resolver is not None:
-            chat = await self._chat_resolver.resolve_chat(incoming.tenant_key, incoming.chat_id)
-            chat = await self._repository.upsert_chat(chat)
+        needs_resolution = chat is None or (
+            chat.last_checked_at is None and chat.name == incoming.chat_id
+        )
+        if needs_resolution and self._chat_resolver is not None:
+            resolved = await self._chat_resolver.resolve_chat(incoming.tenant_key, incoming.chat_id)
+            if resolved.tenant_key != incoming.tenant_key or resolved.chat_id != incoming.chat_id:
+                raise ValueError("resolved chat identity did not match incoming message")
+            chat = await self._repository.upsert_chat(resolved)
         if chat is None:
-            chat = await self._repository.upsert_chat(
-                Chat(
-                    tenant_key=incoming.tenant_key,
-                    chat_id=incoming.chat_id,
-                    name=incoming.chat_id,
-                    bot_present=True,
-                )
-            )
+            return []
         if chat.external or chat.disbanded or chat.unsupported:
             return []
 

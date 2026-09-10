@@ -978,24 +978,41 @@ class SQLiteRepository:
                 )
 
     async def set_bot_membership(
-        self, tenant_key: str, chat_id: str, present: bool, name: str = ""
+        self,
+        tenant_key: str,
+        chat_id: str,
+        present: bool,
+        name: str = "",
+        external: bool | None = None,
     ) -> Chat:
         now = _db_time()
+        external_value = True if external is None else external
         async with self._transaction() as conn:
             cursor = await conn.execute(
                 """
-                INSERT INTO chats(id, tenant_key, chat_id, name, bot_present)
-                VALUES (?,?,?,?,?)
+                INSERT INTO chats(id, tenant_key, chat_id, name, external, bot_present)
+                VALUES (?,?,?,?,?,?)
                 ON CONFLICT(tenant_key, chat_id) DO UPDATE SET
                     name=CASE WHEN excluded.name='' THEN chats.name ELSE excluded.name END,
-                    bot_present=excluded.bot_present, disbanded=0,
+                    external=CASE WHEN ? THEN excluded.external ELSE chats.external END,
+                    bot_present=excluded.bot_present,
+                    disbanded=CASE WHEN excluded.bot_present=1 THEN 0 ELSE chats.disbanded END,
                     unsupported=CASE WHEN excluded.bot_present=1 THEN 0 ELSE chats.unsupported END,
                     unsupported_reason=CASE WHEN excluded.bot_present=1
                                             THEN '' ELSE chats.unsupported_reason END,
                     updated_at=?
                 RETURNING *
                 """,
-                (str(uuid4()), tenant_key, chat_id, name or chat_id, int(present), now),
+                (
+                    str(uuid4()),
+                    tenant_key,
+                    chat_id,
+                    name or chat_id,
+                    int(external_value),
+                    int(present),
+                    int(external is not None),
+                    now,
+                ),
             )
             row = _row(await cursor.fetchone())
             if not row:
@@ -1019,10 +1036,14 @@ class SQLiteRepository:
         async with self._transaction() as conn:
             cursor = await conn.execute(
                 """
-                UPDATE chats SET disbanded=1, bot_present=0, updated_at=?
-                WHERE tenant_key=? AND chat_id=? RETURNING id
+                INSERT INTO chats(
+                    id, tenant_key, chat_id, name, external, bot_present, disbanded
+                ) VALUES (?,?,?,?,1,0,1)
+                ON CONFLICT(tenant_key, chat_id) DO UPDATE SET
+                    disbanded=1, bot_present=0, updated_at=?
+                RETURNING id
                 """,
-                (_db_time(), tenant_key, chat_id),
+                (str(uuid4()), tenant_key, chat_id, chat_id, _db_time()),
             )
             row = _row(await cursor.fetchone())
             if row:
