@@ -23,24 +23,27 @@ from .models import (
 
 
 class Repository(Protocol):
-    async def enqueue_event(
-        self, event_key: str, event_type: str, payload: dict[str, Any]
-    ) -> bool: ...
+    async def enqueue_event(self, event_key: str, event_type: str, payload: dict[str, Any]) -> bool:
+        raise NotImplementedError
 
     async def find_active_users(
         self, tenant_key: str, user_ids: set[str], open_ids: set[str]
-    ) -> list[User]: ...
+    ) -> list[User]:
+        raise NotImplementedError
 
     async def find_at_all_users(
         self,
         tenant_key: str,
         chat_id: str,
         member_user_ids: set[str] | None = None,
-    ) -> list[User]: ...
+    ) -> list[User]:
+        raise NotImplementedError
 
-    async def get_chat(self, tenant_key: str, chat_id: str) -> Chat | None: ...
+    async def get_chat(self, tenant_key: str, chat_id: str) -> Chat | None:
+        raise NotImplementedError
 
-    async def upsert_chat(self, chat: Chat) -> Chat: ...
+    async def upsert_chat(self, chat: Chat) -> Chat:
+        raise NotImplementedError
 
     async def save_message_targets(
         self,
@@ -48,15 +51,18 @@ class Repository(Protocol):
         chat: Chat,
         normalized_content: str,
         targets: dict[UUID, tuple[User, MentionType]],
-    ) -> tuple[SourceMessage, list[InboxItem]]: ...
+    ) -> tuple[SourceMessage, list[InboxItem]]:
+        raise NotImplementedError
 
     async def recall_message(
         self, tenant_key: str, message_id: str, recalled_at: datetime
-    ) -> list[InboxItem]: ...
+    ) -> list[InboxItem]:
+        raise NotImplementedError
 
     async def get_inbox_context(
         self, item_id: UUID
-    ) -> tuple[InboxItem, SourceMessage, User] | None: ...
+    ) -> tuple[InboxItem, SourceMessage, User] | None:
+        raise NotImplementedError
 
     async def update_inbox_item(
         self,
@@ -65,31 +71,39 @@ class Repository(Protocol):
         note: str,
         expected_version: int | None = None,
         changed_at: datetime | None = None,
-    ) -> InboxItem | None: ...
+    ) -> InboxItem | None:
+        raise NotImplementedError
 
-    async def enable_user(self, user: User, bitable_record_id: str = "") -> User: ...
+    async def enable_user(self, user: User, bitable_record_id: str = "") -> User:
+        raise NotImplementedError
 
     async def disable_user(
         self, tenant_key: str, user_id: str, bitable_record_id: str = ""
-    ) -> User | None: ...
+    ) -> User | None:
+        raise NotImplementedError
 
-    async def get_enabled_user(self, tenant_key: str, user_id: str) -> User | None: ...
+    async def get_enabled_user(self, tenant_key: str, user_id: str) -> User | None:
+        raise NotImplementedError
 
-    async def activate_user(self, info: OAuthUserInfo, tokens: OAuthTokens) -> User | None: ...
+    async def activate_user(self, info: OAuthUserInfo, tokens: OAuthTokens) -> User | None:
+        raise NotImplementedError
 
-    async def list_active_users(self) -> list[User]: ...
+    async def list_active_users(self) -> list[User]:
+        raise NotImplementedError
 
-    async def list_users(self) -> list[User]: ...
+    async def list_users(self) -> list[User]:
+        raise NotImplementedError
 
     async def update_user_setting(
         self, tenant_key: str, user_id: str, include_at_all: bool
-    ) -> User | None: ...
+    ) -> User | None:
+        raise NotImplementedError
 
-    async def replace_user_chats(
-        self, user: User, memberships: list[ChatMembership]
-    ) -> list[Chat]: ...
+    async def replace_user_chats(self, user: User, memberships: list[ChatMembership]) -> list[Chat]:
+        raise NotImplementedError
 
-    async def set_bot_chats(self, tenant_key: str, chat_ids: set[str]) -> None: ...
+    async def set_bot_chats(self, tenant_key: str, chat_ids: set[str]) -> None:
+        raise NotImplementedError
 
     async def set_bot_membership(
         self,
@@ -98,15 +112,19 @@ class Repository(Protocol):
         present: bool,
         name: str = "",
         external: bool | None = None,
-    ) -> Chat: ...
+    ) -> Chat:
+        raise NotImplementedError
 
-    async def disband_chat(self, tenant_key: str, chat_id: str) -> None: ...
+    async def disband_chat(self, tenant_key: str, chat_id: str) -> None:
+        raise NotImplementedError
 
     async def set_chat_unsupported(
         self, tenant_key: str, chat_id: str, unsupported: bool, reason: str
-    ) -> Chat | None: ...
+    ) -> Chat | None:
+        raise NotImplementedError
 
-    async def purge_expired_content(self, before: datetime) -> int: ...
+    async def purge_expired_content(self, before: datetime) -> int:
+        raise NotImplementedError
 
 
 class MemoryRepository:

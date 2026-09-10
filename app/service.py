@@ -18,9 +18,11 @@ from .repository import Repository
 
 
 class ChatResolver(Protocol):
-    async def resolve_chat(self, tenant_key: str, chat_id: str) -> Chat: ...
+    async def resolve_chat(self, tenant_key: str, chat_id: str) -> Chat:
+        raise NotImplementedError
 
-    async def list_chat_member_user_ids(self, chat_id: str) -> set[str]: ...
+    async def list_chat_member_user_ids(self, chat_id: str) -> set[str]:
+        raise NotImplementedError
 
 
 class MentionProcessor:

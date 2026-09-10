@@ -101,6 +101,7 @@ source = ["app"]
 exclude_also = [
   "if TYPE_CHECKING:",
   "if __name__ == .__main__.:",
+  "raise NotImplementedError",
   '\.\.\.',
 ]
 show_missing = true
