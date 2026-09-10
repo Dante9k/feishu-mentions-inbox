@@ -48,6 +48,8 @@ See the Chinese [design proposal](docs/design.md), detailed [architecture](docs/
 
 ## Quick start
 
+For a loopback-only Windows pilot without Docker, WSL, a public callback, or a tunnel, follow the [Windows local-only guide](docs/local-only.md). It uses native Python, SQLite, and Feishu's outbound long connection. Initialize it with `python -m app.local --init`, then run `python -m app.local --offline` for a network-free smoke test.
+
 Requirements: Docker Engine 24+, Docker Compose v2, an HTTPS callback domain, a Feishu custom app, and a standalone Bitable with advanced permissions.
 
 ```bash

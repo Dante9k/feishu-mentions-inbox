@@ -70,6 +70,8 @@ flowchart LR
 
 ## 快速开始
 
+只想在自己的 Windows 电脑运行、禁止其他电脑访问？请使用 [Windows 仅本机运行手册](docs/local-only.md)：原生 Python + SQLite + 飞书出站长连接，不需要公网回调、Docker 或内网穿透。先运行 `python -m app.local --init`，再运行 `python -m app.local --offline` 做冒烟测试；真实业务仍须完成应用配置与授权。
+
 ### 1. 环境要求
 
 - Docker Engine 24+ 与 Docker Compose v2；

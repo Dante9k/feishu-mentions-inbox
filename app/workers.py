@@ -82,7 +82,26 @@ class BackgroundSupervisor:
         if not tenant_key or not chat_id:
             return
         if event_type == "im.chat.member.bot.added_v1":
-            await self.repository.set_bot_membership(tenant_key, chat_id, True)
+            cached = await self.repository.get_chat(tenant_key, chat_id)
+            # Quarantine the chat before the API request. If classification fails,
+            # later message events must not inherit a stale internal-chat decision.
+            await self.repository.set_bot_membership(
+                tenant_key,
+                chat_id,
+                False,
+                name=cached.name if cached else chat_id,
+                external=True,
+            )
+            resolved = await self.feishu.resolve_chat(tenant_key, chat_id)
+            if resolved.tenant_key != tenant_key or resolved.chat_id != chat_id:
+                raise FeishuAPIError("resolved chat identity did not match bot-added event")
+            await self.repository.set_bot_membership(
+                tenant_key,
+                chat_id,
+                True,
+                name=resolved.name,
+                external=resolved.external,
+            )
         elif event_type == "im.chat.member.bot.deleted_v1":
             await self.repository.set_bot_membership(tenant_key, chat_id, False)
         elif event_type == "im.chat.disbanded_v1":
@@ -137,7 +156,7 @@ class BackgroundSupervisor:
             if updates:
                 try:
                     records = [
-                        (str(mapping["record_id"]), fields)
+                        (str(mapping["record_id"]), self._update_fields(table_key, fields))
                         for _, fields, mapping, _ in updates
                         if mapping
                     ]
@@ -151,6 +170,13 @@ class BackgroundSupervisor:
                         await self.repository.retry_outbox(
                             UUID(str(job["id"])), str(exc), int(job["attempts"])
                         )
+
+    def _update_fields(self, table_key: str, fields: dict[str, Any]) -> dict[str, Any]:
+        if self.settings.local_only and table_key == "settings":
+            # In polling mode the existing checkbox is user-owned. Coverage
+            # projections must not overwrite an edit before the next poll.
+            return {key: value for key, value in fields.items() if key != "包含@所有人"}
+        return fields
 
     async def _project(self, job: dict[str, Any]) -> tuple[dict[str, Any], int]:
         entity_id = UUID(str(job["entity_id"]))
@@ -230,11 +256,32 @@ class BackgroundSupervisor:
             try:
                 await self.repository.reconcile_outbox()
                 await self._pull_bitable_changes()
+                if self.settings.local_only:
+                    await self._pull_bitable_settings()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Bitable reconciliation failed")
             await asyncio.sleep(self.settings.reconciliation_interval_seconds)
+
+    async def _pull_bitable_settings(self) -> None:
+        owners = {}
+        for user in await self.repository.list_active_users():
+            if user.tenant_key != self.settings.feishu_tenant_key:
+                continue
+            mapping = await self.repository.get_mapping("user", user.id, "settings")
+            if mapping:
+                owners[str(mapping["record_id"])] = user
+        if not owners:
+            return
+        for remote in await self.bitable.list_records("settings"):
+            owner = owners.get(str(remote.get("record_id") or ""))
+            if owner is None:
+                continue
+            value = (remote.get("fields") or {}).get("包含@所有人")
+            # Never use the editable remote user ID to choose the target user.
+            if isinstance(value, bool) and value != owner.include_at_all:
+                await self.repository.update_user_setting(owner.tenant_key, owner.user_id, value)
 
     async def _pull_bitable_changes(self) -> None:
         local_records = await self.repository.inbox_reconciliation_state()

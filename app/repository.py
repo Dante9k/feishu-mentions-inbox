@@ -92,7 +92,12 @@ class Repository(Protocol):
     async def set_bot_chats(self, tenant_key: str, chat_ids: set[str]) -> None: ...
 
     async def set_bot_membership(
-        self, tenant_key: str, chat_id: str, present: bool, name: str = ""
+        self,
+        tenant_key: str,
+        chat_id: str,
+        present: bool,
+        name: str = "",
+        external: bool | None = None,
     ) -> Chat: ...
 
     async def disband_chat(self, tenant_key: str, chat_id: str) -> None: ...
@@ -394,24 +399,41 @@ class MemoryRepository:
                     chat.unsupported_reason = ""
 
     async def set_bot_membership(
-        self, tenant_key: str, chat_id: str, present: bool, name: str = ""
+        self,
+        tenant_key: str,
+        chat_id: str,
+        present: bool,
+        name: str = "",
+        external: bool | None = None,
     ) -> Chat:
         chat = self.chats.get((tenant_key, chat_id)) or Chat(
-            tenant_key=tenant_key, chat_id=chat_id, name=name or chat_id
+            tenant_key=tenant_key,
+            chat_id=chat_id,
+            name=name or chat_id,
+            external=True if external is None else external,
         )
+        if name:
+            chat.name = name
+        if external is not None:
+            chat.external = external
         chat.bot_present = present
-        chat.disbanded = False
         if present:
+            chat.disbanded = False
             chat.unsupported = False
             chat.unsupported_reason = ""
         self.chats[(tenant_key, chat_id)] = chat
         return chat
 
     async def disband_chat(self, tenant_key: str, chat_id: str) -> None:
-        chat = self.chats.get((tenant_key, chat_id))
-        if chat:
-            chat.disbanded = True
-            chat.bot_present = False
+        chat = self.chats.get((tenant_key, chat_id)) or Chat(
+            tenant_key=tenant_key,
+            chat_id=chat_id,
+            name=chat_id,
+            external=True,
+        )
+        chat.disbanded = True
+        chat.bot_present = False
+        self.chats[(tenant_key, chat_id)] = chat
 
     async def set_chat_unsupported(
         self, tenant_key: str, chat_id: str, unsupported: bool, reason: str

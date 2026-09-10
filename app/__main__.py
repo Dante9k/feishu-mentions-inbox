@@ -7,11 +7,15 @@ from .config import Settings
 
 def main() -> None:
     settings = Settings.from_env()
+    issues = settings.validate_runtime()
+    if issues:
+        raise RuntimeError("invalid settings: " + ", ".join(issues))
     uvicorn.run(
         "app.main:app",
         host=settings.host,
         port=settings.port,
-        proxy_headers=True,
+        proxy_headers=not settings.local_only,
+        access_log=not settings.local_only,
     )
 
 

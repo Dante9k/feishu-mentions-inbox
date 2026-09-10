@@ -2,6 +2,8 @@
 
 [返回 README](../README.md) · [多维表格配置](bitable-setup.md) · [部署指南](deployment.md)
 
+> 本文的事件 URL、加密配置和反向代理部分面向服务器 Webhook 模式。Windows 仅本机模式请按 [仅本机运行手册](local-only.md) 配置长连接和本机 OAuth，不配置公网回调或内网穿透。
+
 ## 1. 创建和发布企业自建应用
 
 启用机器人与网页应用能力，把应用可用范围先限制为 3 个测试账号。申请以下最小能力（开放平台后台显示名称可能随版本调整，以对应接口页面的“权限要求”为准）：
@@ -11,7 +13,7 @@
 - 以应用身份向员工发送消息。
 - 查看、编辑和管理目标多维表格。
 - 管理云文档协作者，用于开通和撤销多维表格访问。
-- 用户 OAuth：读取本人所在群和离线访问（默认 scope 为 `im:chat:readonly offline_access`）。
+- 用户 OAuth：读取本人所在群、稳定员工 ID 和离线访问（默认 scope 为 `im:chat:readonly contact:user.employee_id:readonly offline_access`）。
 
 权限、事件、网页应用回调或数据范围发生变化后，需要创建新版本并完成管理员审核/发布。
 

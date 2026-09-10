@@ -71,6 +71,7 @@ def settings() -> Settings:
         feishu_require_signature=False,
         admin_api_token="admin-token",
         bitable_callback_token="bitable-token",
+        bitable_user_role_id="role-test",
         oauth_state_secret="oauth-secret",
         token_encryption_secret="cipher-secret",
         public_base_url="https://mentions.example.com",

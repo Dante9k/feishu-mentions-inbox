@@ -264,6 +264,37 @@ async def test_non_group_and_external_group_are_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_legacy_unclassified_chat_is_resolved_before_collection() -> None:
+    repo, _ = await configured_repo()
+    repo.chats[(TENANT, CHAT_ID)] = Chat(
+        tenant_key=TENANT,
+        chat_id=CHAT_ID,
+        name=CHAT_ID,
+        external=False,
+        bot_present=True,
+        last_checked_at=None,
+    )
+
+    class ExternalResolver:
+        async def resolve_chat(self, tenant_key: str, chat_id: str) -> Chat:
+            return Chat(
+                tenant_key=tenant_key,
+                chat_id=chat_id,
+                name="External customer chat",
+                external=True,
+                bot_present=True,
+                last_checked_at=datetime.now(UTC),
+            )
+
+        async def list_chat_member_user_ids(self, chat_id: str) -> set[str]:
+            return set()
+
+    processor = MentionProcessor(repo, chat_resolver=ExternalResolver())
+    assert await processor.process_receive_event(message_event()) == []
+    assert repo.sources == {}
+
+
+@pytest.mark.asyncio
 async def test_recall_clears_content_and_ignores_open_item() -> None:
     repo, _ = await configured_repo()
     processor = MentionProcessor(repo)

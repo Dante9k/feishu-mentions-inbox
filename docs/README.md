@@ -7,6 +7,7 @@
 | 了解产品边界、业务规则和取舍 | [设计方案](design.md) |
 | 了解模块、数据模型和一致性机制 | [架构设计](architecture.md) |
 | 用少量账号完成 SQLite 试点 | [轻量试点](lite-pilot.md) |
+| Windows 仅本机访问，无公网回调或内网穿透 | [仅本机运行](local-only.md) |
 | 配置飞书应用、事件和 OAuth | [飞书应用配置](feishu-setup.md) |
 | 创建多维表格、权限与自动化 | [多维表格配置](bitable-setup.md) |
 | 选择 SQLite 或 PostgreSQL | [数据库模式](database-backends.md) |

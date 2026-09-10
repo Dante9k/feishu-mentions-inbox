@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -35,6 +36,20 @@ class _CachedToken:
     expires_at: float = 0.0
 
 
+def _external_state(chat: dict[str, Any], expected_tenant_key: str) -> bool | None:
+    """Return a classified state; None means the API omitted required evidence."""
+    chat_tag = str(chat.get("chat_tag") or "").lower()
+    raw_external = chat.get("external")
+    returned_tenant = str(chat.get("tenant_key") or "")
+    if chat_tag == "external" or raw_external is True:
+        return True
+    if returned_tenant and expected_tenant_key and returned_tenant != expected_tenant_key:
+        return True
+    if raw_external is False:
+        return False
+    return None
+
+
 class FeishuClient:
     def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -48,6 +63,8 @@ class FeishuClient:
             await self._http.aclose()
 
     def authorize_url(self, state: str) -> str:
+        if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
+            raise FeishuAPIError("Feishu application is not configured")
         query = urlencode(
             {
                 "app_id": self.settings.feishu_app_id,
@@ -162,11 +179,9 @@ class FeishuClient:
             chat_id = str(item.get("chat_id") or "")
             if not chat_id:
                 continue
-            chat_tag = str(item.get("chat_tag") or "").lower()
-            tenant_key = str(item.get("tenant_key") or "")
-            external = bool(item.get("external", False)) or chat_tag == "external"
-            if tenant_key and self.settings.feishu_tenant_key:
-                external = external or tenant_key != self.settings.feishu_tenant_key
+            # Missing classification is quarantined as external instead of
+            # becoming an internal-chat allow decision by default.
+            external = _external_state(item, self.settings.feishu_tenant_key) is not False
             memberships.append(
                 ChatMembership(
                     chat_id=chat_id,
@@ -232,14 +247,16 @@ class FeishuClient:
             params={"user_id_type": "user_id"},
         )
         chat_data = data.get("chat") or data
-        chat_tag = str(chat_data.get("chat_tag") or "").lower()
-        external = bool(chat_data.get("external", False)) or chat_tag == "external"
+        external = _external_state(chat_data, tenant_key)
+        if external is None:
+            raise FeishuAPIError("chat response omitted external classification")
         return Chat(
             tenant_key=tenant_key,
             chat_id=chat_id,
             name=str(chat_data.get("name") or chat_id),
             external=external,
             bot_present=True,
+            last_checked_at=datetime.now(UTC),
         )
 
     async def send_activation_message(self, user_id: str, activation_url: str) -> None:
