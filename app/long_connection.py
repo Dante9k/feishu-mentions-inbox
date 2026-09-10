@@ -84,6 +84,9 @@ class LongConnectionReceiver:
                     FEISHU_BASE_URL=self.settings.feishu_base_url,
                     PYTHONIOENCODING="utf-8",
                 )
+                creationflags = (
+                    int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if os.name == "nt" else 0
+                )
                 self.process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     "-m",
@@ -94,7 +97,7 @@ class LongConnectionReceiver:
                     stderr=asyncio.subprocess.DEVNULL,
                     limit=MAX_EVENT_BYTES + 1,
                     env=env,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    creationflags=creationflags,
                 )
                 assert self.process.stdout is not None
                 assert self.process.stdin is not None
